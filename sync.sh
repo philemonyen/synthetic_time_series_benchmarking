@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $(basename "$0") <mode> <scp-destination>"
   echo "Modes:"
-  echo "  local-to-remote   Sync generate.sh, job.sh, model/, and data/ to the remote server"
+  echo "  local-to-remote   Sync generate.sh, job.sh, and model/ to the remote server"
   echo "  remote-to-local   Sync synthesis/ from the remote server to local"
   echo "Example:"
   echo "  $(basename "$0") local-to-remote user@host:/path/to/synthetic_time_series_benchmarking/"
@@ -25,7 +25,6 @@ sync_local_to_remote() {
     "generate.sh"
     "job.sh"
     "model"
-    "data"
   )
 
   for item in "${items[@]}"; do
@@ -40,7 +39,6 @@ sync_local_to_remote() {
     "${SCRIPT_DIR}/generate.sh" \
     "${SCRIPT_DIR}/job.sh" \
     "${SCRIPT_DIR}/model" \
-    "${SCRIPT_DIR}/data" \
     "${REMOTE}"
 }
 

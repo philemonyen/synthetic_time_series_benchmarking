@@ -21,7 +21,6 @@ if [[ $# -ne 1 ]]; then
 fi
 
 MODEL="$1"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 1. Load environment modules
 module --force purge
@@ -34,8 +33,5 @@ module load scipy-stack
 export CUDA_HOME="${EBROOTCUDA}"
 export LD_LIBRARY_PATH="${EBROOTCUDA}/lib64:${LD_LIBRARY_PATH:-}"
 export PATH="${EBROOTCUDA}/bin:${PATH}"
-
-mkdir -p "${SCRIPT_DIR}/logs"
-cd "${SCRIPT_DIR}"
 
 ./generate.sh "${MODEL}"
