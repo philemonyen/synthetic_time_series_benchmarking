@@ -48,7 +48,7 @@ To download a model, run
 ```
 If no arguments provided, the scrips will print available datasets or models. \
 #### Current Progress
-For SSSD-ECG generation, only run ```./load_model.sh sssd-ecg```. 
+For SSSD-ECG generation, just run ```./load_model.sh sssd-ecg```. This call will handle preprocessed data download and SSSD-ECG model installation. 
 
 ### Step 2: Sync Local Setup with Remote Server
 To sync local setup with remote server, run
@@ -58,11 +58,11 @@ To sync local setup with remote server, run
 ```<destination>``` is the full path (```userid@remote-server:path_to_dest```) to the target location in remote server. 
 
 ### Step 3: Synthesis Generation on Remote Server
-To training the model and generate synthetic data with it, SSH to the remote server and run
+To training the model and generate synthetic data with it, SSH to the remote server and submit the job via
 ```
-./generate.sh <model>
+sbatch ./job.sh <model>
 ```
-```generate.sh``` will handle python dependency collection, virtual environment creation, model training, and synthesis generation. The generated synthesis will be stored in ```synthesis/```
+```job.sh``` will handle job details and computing resource allocation, so make sure to double check before submitting a job. ```job.sh``` will call ```generate.sh``` to activate virtual environment, train the model, and generate synthesis. The generated synthesis will be stored in ```synthesis/{date}``` where ```date``` will be the execution timestamp. 
 
 ### Step 4: Acquire Generated Synthesis from Remote Server
 To acquire the generated synthetic data from remote server to local, run 

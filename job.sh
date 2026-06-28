@@ -11,18 +11,16 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") <dataset> <model>"
-  echo "  dataset: dataset name (e.g. ptb-xl), or '-' to skip data download"
-  echo "  model:   model name (e.g. sssd-ecg)"
+  echo "Usage: $(basename "$0") <model>"
+  echo "  model: model name (e.g. sssd-ecg)"
   exit 1
 }
 
-if [[ $# -ne 2 ]]; then
+if [[ $# -ne 1 ]]; then
   usage
 fi
 
-DATASET="$1"
-MODEL="$2"
+MODEL="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 1. Load environment modules
@@ -40,36 +38,4 @@ export PATH="${EBROOTCUDA}/bin:${PATH}"
 mkdir -p "${SCRIPT_DIR}/logs"
 cd "${SCRIPT_DIR}"
 
-# 3. Optional dataset download
-if [[ "${DATASET}" != "-" && -n "${DATASET}" ]]; then
-  echo "Downloading dataset: ${DATASET}"
-  ./load_data.sh "${DATASET}"
-fi
-
-# 4. Download model and create virtual environment
-echo "Loading model: ${MODEL}"
-./load_model.sh "${MODEL}"
-
-# 5. Activate model virtual environment
-case "${MODEL}" in
-  sssd-ecg)
-    VENV_DIR="${SCRIPT_DIR}/model/SSSD-ECG/venv"
-    ;;
-  *)
-    echo "Unknown model: ${MODEL}" >&2
-    usage
-    ;;
-esac
-
-if [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
-  echo "Error: Virtual environment not found at ${VENV_DIR}" >&2
-  exit 1
-fi
-
-# shellcheck disable=SC1091
-source "${VENV_DIR}/bin/activate"
-
-python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
-
-# 6. Train and generate synthetic data
 ./generate.sh "${MODEL}"

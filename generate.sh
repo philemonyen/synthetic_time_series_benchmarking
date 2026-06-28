@@ -15,14 +15,32 @@ MODEL="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_BASE_DIR="${SCRIPT_DIR}/model"
 
+activate_model_venv() {
+  local model_dir="$1"
+  local venv_dir="${model_dir}/venv"
+  local requirements_file="${model_dir}/requirements.txt"
+
+  if [[ ! -f "${requirements_file}" ]]; then
+    echo "Error: requirements.txt not found at ${requirements_file}. Run ./load_model.sh first." >&2
+    exit 1
+  fi
+
+  if [[ ! -d "${venv_dir}/bin" ]]; then
+    echo "Creating virtual environment at ${venv_dir}"
+    python3 -m venv "${venv_dir}"
+    # shellcheck disable=SC1091
+    source "${venv_dir}/bin/activate"
+    pip install --upgrade pip
+    pip install -r "${requirements_file}"
+  else
+    # shellcheck disable=SC1091
+    source "${venv_dir}/bin/activate"
+  fi
+
+  python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
+}
+
 generate_sssd_ecg() {
-  local figshare_share_url="https://figshare.com/s/43df16e4a50e4dd0a0c5"
-  local figshare_article_id="21922947"
-  local required_data_files=(
-    "ptbxl_train_data.npy"
-    "ptbxl_train_labels.npy"
-    "ptbxl_test_labels.npy"
-  )
   local model_repo_dir
   local sssd_src_dir
   local default_config
@@ -55,99 +73,7 @@ generate_sssd_ecg() {
     exit 1
   fi
 
-  download_figshare_ptbxl() {
-    local dest_dir="$1"
-    mkdir -p "${dest_dir}"
-
-    local missing=false
-    for file_name in "${required_data_files[@]}"; do
-      if [[ ! -f "${dest_dir}/${file_name}" ]]; then
-        missing=true
-        break
-      fi
-    done
-
-    if [[ "${missing}" == "false" ]]; then
-      echo "Preprocessed PTB-XL files already present in ${dest_dir}"
-      return 0
-    fi
-
-    echo "Downloading preprocessed PTB-XL data from Figshare (${figshare_share_url})"
-    python3 - "${dest_dir}" "${figshare_article_id}" "${figshare_share_url}" "${required_data_files[@]}" <<'PY'
-import json
-import shutil
-import sys
-import tempfile
-import zipfile
-from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-
-dest_dir = Path(sys.argv[1])
-article_id = sys.argv[2]
-share_url = sys.argv[3]
-required_files = sys.argv[4:]
-
-def download_file(url: str, target: Path) -> None:
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request) as response, target.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-
-def copy_required_files(source_root: Path) -> None:
-    for file_name in required_files:
-        matches = list(source_root.rglob(file_name))
-        if not matches:
-            raise FileNotFoundError(f"Could not find {file_name} in downloaded Figshare archive")
-        shutil.copy2(matches[0], dest_dir / file_name)
-
-with tempfile.TemporaryDirectory() as tmp_dir:
-    staging_dir = Path(tmp_dir)
-    files_api = f"https://api.figshare.com/v2/articles/{article_id}/files"
-    downloaded = False
-
-    try:
-        with urlopen(files_api) as response:
-            files = json.load(response)
-    except (HTTPError, URLError, json.JSONDecodeError):
-        files = []
-
-    if files:
-        for file_info in files:
-            file_name = file_info["name"]
-            file_id = file_info["id"]
-            download_url = file_info.get("download_url") or f"https://api.figshare.com/v2/file/download/{file_id}"
-            target_path = staging_dir / file_name
-            download_file(download_url, target_path)
-            if target_path.suffix == ".zip":
-                with zipfile.ZipFile(target_path) as archive:
-                    archive.extractall(staging_dir)
-        copy_required_files(staging_dir)
-        downloaded = True
-    else:
-        archive_path = staging_dir / "ptbxl_preprocessed.zip"
-        archive_urls = [
-            f"https://ndownloader.figshare.com/articles/{article_id}/versions/latest",
-            f"https://api.figshare.com/v2/articles/{article_id}/files",
-        ]
-        for archive_url in archive_urls:
-            try:
-                download_file(archive_url, archive_path)
-                if zipfile.is_zipfile(archive_path):
-                    with zipfile.ZipFile(archive_path) as archive:
-                        archive.extractall(staging_dir)
-                    copy_required_files(staging_dir)
-                    downloaded = True
-                    break
-            except (HTTPError, URLError, zipfile.BadZipFile, FileNotFoundError):
-                continue
-
-    if not downloaded:
-        raise RuntimeError(
-            "Failed to download preprocessed PTB-XL data from Figshare. "
-            f"Check {share_url} manually and place the required .npy files in {dest_dir}"
-        )
-PY
-  }
+  activate_model_venv "${model_repo_dir}"
 
   prepare_training_config() {
     local config_path="${trained_dir}/config.json"
@@ -248,11 +174,14 @@ PY
   }
 
   local training_config
-  download_figshare_ptbxl "${sssd_src_dir}"
   training_config="$(prepare_training_config)"
   run_training "${training_config}"
   run_inference "${training_config}"
   collect_synthesis_outputs "${training_config}"
+
+  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    deactivate
+  fi
 }
 
 case "${MODEL}" in
