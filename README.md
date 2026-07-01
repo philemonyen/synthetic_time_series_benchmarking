@@ -69,7 +69,7 @@ sbatch ./job.sh <model>
 ```
 ```job.sh``` will handle job details and computing resource allocation, so make sure to double check before submitting a job. The generated synthesis will be stored in ```synthesis/{model}/{date}``` where ```model``` is the generation model and ```date``` is the execution timestamp. 
 
-**Important: Relocate to the directory where ```job.sh``` is located before job submission**
+**Important: Relocate to the root directory (where ```job.sh``` is located) before job submission to ensure relative paths will work as expected**
 
 ### Step 6: Acquire Generated Synthesis from Remote Server
 To acquire the generated synthetic data from remote server to local, run 

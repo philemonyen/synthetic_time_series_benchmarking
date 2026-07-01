@@ -15,31 +15,6 @@ MODEL="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_BASE_DIR="${SCRIPT_DIR}/model"
 
-activate_model_venv() {
-  local model_dir="$1"
-  local venv_dir="${model_dir}/venv"
-  local requirements_file="${model_dir}/requirements.txt"
-
-  if [[ ! -f "${requirements_file}" ]]; then
-    echo "Error: requirements.txt not found at ${requirements_file}. Run ./load_model.sh first." >&2
-    exit 1
-  fi
-
-  if [[ ! -d "${venv_dir}/bin" ]]; then
-    echo "Creating virtual environment at ${venv_dir}"
-    python3 -m venv "${venv_dir}"
-    # shellcheck disable=SC1091
-    source "${venv_dir}/bin/activate"
-    pip install --upgrade pip
-    pip install -r "${requirements_file}"
-  else
-    # shellcheck disable=SC1091
-    source "${venv_dir}/bin/activate"
-  fi
-
-  python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
-}
-
 generate_sssd_ecg() {
   local model_repo_dir
   local sssd_src_dir
@@ -72,8 +47,6 @@ generate_sssd_ecg() {
     echo "Error: SSSD-ECG config not found at ${default_config}" >&2
     exit 1
   fi
-
-  activate_model_venv "${model_repo_dir}"
 
   prepare_training_config() {
     local config_path="${trained_dir}/config.json"
@@ -178,10 +151,6 @@ PY
   run_training "${training_config}"
   run_inference "${training_config}"
   collect_synthesis_outputs "${training_config}"
-
-  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    deactivate
-  fi
 }
 
 case "${MODEL}" in

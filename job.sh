@@ -25,7 +25,7 @@ MODEL="$1"
 # 1. Load environment modules
 module --force purge
 module load StdEnv/2023
-module load python/3.10
+module load python/3.11
 module load cuda/12.2
 module load scipy-stack
 
@@ -34,4 +34,20 @@ export CUDA_HOME="${EBROOTCUDA}"
 export LD_LIBRARY_PATH="${EBROOTCUDA}/lib64:${LD_LIBRARY_PATH:-}"
 export PATH="${EBROOTCUDA}/bin:${PATH}"
 
+# 3. Set up and activate model virtual environment
+VENV_ROOT="${HOME}/venv"
+VENV_DIR="${VENV_ROOT}/${MODEL}"
+
+if [[ ! -d "${VENV_ROOT}" ]]; then
+  mkdir -p "${VENV_ROOT}"
+fi
+
+if [[ ! -d "${VENV_DIR}/bin" ]]; then
+  virtualenv --no-download "${VENV_DIR}"
+fi
+
+# shellcheck disable=SC1091
+source "${VENV_DIR}/bin/activate"
+
+# 4. Run generation
 ./generate.sh "${MODEL}"
