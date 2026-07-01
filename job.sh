@@ -50,4 +50,12 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 # 4. Run generation
-./generate.sh "${MODEL}"
+case "${MODEL}" in
+  sssd-ecg)
+    ./generate_scripts/generate_sssdecg.sh
+    ;;
+  *)
+    echo "Unknown model: ${MODEL}" >&2
+    usage
+    ;;
+esac

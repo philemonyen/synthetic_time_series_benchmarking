@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $(basename "$0") <mode> <scp-destination>"
   echo "Modes:"
-  echo "  local-to-remote   Sync generate.sh, job.sh, and model/ to the remote server"
+  echo "  local-to-remote   Sync generate_scripts/, job.sh, and model/ to the remote server"
   echo "  remote-to-local   Sync synthesis/ from the remote server to local"
   echo "Example:"
   echo "  $(basename "$0") local-to-remote user@host:/path/to/synthetic_time_series_benchmarking/"
@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 sync_local_to_remote() {
   local items=(
-    "generate.sh"
+    "generate_scripts"
     "job.sh"
     "model"
   )
@@ -36,7 +36,7 @@ sync_local_to_remote() {
 
   echo "Syncing local to remote: ${REMOTE}"
   scp -r \
-    "${SCRIPT_DIR}/generate.sh" \
+    "${SCRIPT_DIR}/generate_scripts" \
     "${SCRIPT_DIR}/job.sh" \
     "${SCRIPT_DIR}/model" \
     "${REMOTE}"
