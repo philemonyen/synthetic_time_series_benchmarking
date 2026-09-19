@@ -23,6 +23,16 @@ BATCH_SIZE="${TTS_GAN_BATCH_SIZE:-16}"
 # healthy for ~60 epochs and then collapse into the frozen-0.25 state at every
 # length beyond that; a constant learning rate for 187 epochs is the usual
 # suspect for that shape of late-stage GAN failure.
+# Adversarial balance. The discriminator learns 3x faster than the generator by
+# default (3e-4 vs 1e-4), and every PTB-XL collapse so far has been D winning
+# outright -- it starts scoring every fake identically, G's gradient vanishes,
+# and both LSGAN losses freeze at 0.25. Lowering D_LR is the standard remedy.
+# LOSS selects the adversarial objective; wgangp is implemented upstream and is
+# less prone to that particular vanishing-gradient failure than lsgan.
+D_LR="${TTS_GAN_D_LR:-0.0003}"
+G_LR="${TTS_GAN_G_LR:-0.0001}"
+LOSS="${TTS_GAN_LOSS:-lsgan}"
+
 LR_DECAY_FLAG=""
 if [[ -n "${TTS_GAN_LR_DECAY:-}" && "${TTS_GAN_LR_DECAY}" != "0" ]]; then
   LR_DECAY_FLAG="--lr_decay"
@@ -44,7 +54,12 @@ case "${DATASET}" in
         exit 1
         ;;
     esac
-    EXP_NAME="ptbxl_${CLASS_NAME}"
+    # Upstream set_log_dir() builds logs/<exp_name>_<timestamp-to-the-second>/
+    # and calls os.makedirs() without exist_ok, so two jobs for the same class
+    # that start in the same second crash on FileExistsError. Slurm's job id
+    # makes the name unique; collect_synthesis_outputs globs on EXP_NAME, so it
+    # still finds this run's own checkpoint.
+    EXP_NAME="ptbxl_${CLASS_NAME}${SLURM_JOB_ID:+_${SLURM_JOB_ID}}"
     TRAIN_ENTRY="train_ptbxl_GAN.py"
     OUTPUT_PREFIX="ttsgan_ptbxl_$(echo "${CLASS_NAME}" | tr '[:upper:]' '[:lower:]')"
     ;;
@@ -67,11 +82,17 @@ training_date="$(date +%Y-%m-%d)"
 # NOTE: the ptbxl defaults below must stay in step with train_ptbxl_GAN.py.
 run_tag="i${MAX_ITER}"
 if [[ "${DATASET}" == "ptbxl" ]]; then
-  run_tag="${run_tag}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}_p${TTS_GAN_PTBXL_PATCH_SIZE:-100}"
+  ptbxl_window="${TTS_GAN_PTBXL_WINDOW:-1000}"
+  run_tag="${run_tag}_w${ptbxl_window}_e${TTS_GAN_PTBXL_EMBED_DIM:-40}"
+  run_tag="${run_tag}_p${TTS_GAN_PTBXL_PATCH_SIZE:-$((ptbxl_window / 10))}"
 fi
 if [[ -n "${LR_DECAY_FLAG}" ]]; then
   run_tag="${run_tag}_lrdecay"
 fi
+# Only tag non-defaults, so existing directory names stay as they are.
+if [[ "${D_LR}" != "0.0003" ]]; then run_tag="${run_tag}_dlr${D_LR}"; fi
+if [[ "${G_LR}" != "0.0001" ]]; then run_tag="${run_tag}_glr${G_LR}"; fi
+if [[ "${LOSS}" != "lsgan" ]]; then run_tag="${run_tag}_${LOSS}"; fi
 synthesis_dir="${PROJECT_DIR}/synthesis/TTS-GAN/${training_date}_${run_tag}"
 
 # 1. Check for repository existence
@@ -183,10 +204,10 @@ run_training() {
       --latent_dim 100 \
       --gf_dim 1024 \
       --num_workers "${SLURM_CPUS_PER_TASK:-8}" \
-      --g_lr 0.0001 \
-      --d_lr 0.0003 \
+      --g_lr "${G_LR}" \
+      --d_lr "${D_LR}" \
       --optimizer adam \
-      --loss lsgan \
+      --loss "${LOSS}" \
       --wd 1e-3 \
       --beta1 0.9 \
       --beta2 0.999 \
@@ -245,10 +266,12 @@ output_prefix = sys.argv[6]
 # Must match the training-time instantiation (train_GAN.py defaults for
 # UniMiB; train_ptbxl_GAN.py dimensions for PTB-XL)
 if dataset == "ptbxl":
-    # Must mirror train_ptbxl_GAN.py: same embed_dim as the checkpoint was
-    # trained with, or load_state_dict fails (loudly) on shape mismatch.
+    # Must mirror train_ptbxl_GAN.py: same window and embed_dim as the
+    # checkpoint was trained with, or load_state_dict fails (loudly) on shape
+    # mismatch. Samples are therefore (N, 12, 1, window), not always 1000 steps.
+    seq_len = int(os.environ.get("TTS_GAN_PTBXL_WINDOW", "1000"))
     embed_dim = int(os.environ.get("TTS_GAN_PTBXL_EMBED_DIM", "40"))
-    gen_net = Generator(seq_len=1000, channels=12, embed_dim=embed_dim)
+    gen_net = Generator(seq_len=seq_len, channels=12, embed_dim=embed_dim)
 else:
     gen_net = Generator()
 checkpoint = torch.load(ckpt_path, map_location="cpu")
@@ -309,8 +332,9 @@ meta_path.write_text(
     f"Num_samples: {num_samples}\n"
     f"Shape: {synthetic.shape}\n"
     f"Sample_std: {sample_std:.4f}\n"
-    + (f"Embed_dim: {embed_dim}\n"
-       f"Patch_size: {os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', '100')}\n"
+    + (f"Window: {seq_len}\n"
+       f"Embed_dim: {embed_dim}\n"
+       f"Patch_size: {os.environ.get('TTS_GAN_PTBXL_PATCH_SIZE', str(seq_len // 10))}\n"
        if dataset == "ptbxl" else "")
 )
 

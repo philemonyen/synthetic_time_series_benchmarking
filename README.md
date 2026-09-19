@@ -136,10 +136,11 @@ verified-good configuration; change them only deliberately**):
 | `TTS_GAN_LR_DECAY` | off | `1` decays both learning rates linearly to zero over the run. |
 | `TTS_GAN_PTBXL_LABEL_MODE` | `any` | `any` = record contains the class; `exclusive` = record has only that superclass. |
 | `TTS_GAN_PTBXL_NORMALIZE` | `per_sample` | Per-record, per-lead z-normalization. |
-| `TTS_GAN_PTBXL_PATCH_SIZE` | 100 | Discriminator patch size; must divide 1000. |
+| `TTS_GAN_PTBXL_PATCH_SIZE` | window/10 | Discriminator patch size; must divide the window. The default keeps 10 tokens at any window length. |
 | `TTS_GAN_PTBXL_EMBED_DIM` | 40 | Generator width per timestep; must be a multiple of 5. |
+| `TTS_GAN_PTBXL_WINDOW` | 1000 | Timesteps per training item; must divide 1000. `250` splits each record into four 2.5 s windows. |
 
-Outputs land in `synthesis/TTS-GAN/<date>_i<max_iter>[_e<embed>_p<patch>][_lrdecay]/`.
+Outputs land in `synthesis/TTS-GAN/<date>_i<max_iter>[_w<window>_e<embed>_p<patch>][_lrdecay]/`.
 The configuration is part of the directory name because the filenames inside
 only distinguish the class: two runs of the same class on the same day with
 different settings would otherwise overwrite each other's samples, labels and
@@ -296,21 +297,88 @@ strictly comparable for TTS-GAN, whose output is per-lead normalized by design.
   value fails loudly, which is intended — but it means old checkpoints cannot be
   reused after changing that setting.
 
+## Two working configurations
+
+The window and capacity ablation produced a second, better configuration. Both
+are kept because they are not interchangeable — they generate different signal
+lengths.
+
+| | Full-length | Short-window |
+|---|---|---|
+| `TTS_GAN_PTBXL_WINDOW` | 1000 (default) | 250 |
+| `TTS_GAN_PTBXL_EMBED_DIM` | 40 (default) | 80 |
+| `TTS_GAN_PTBXL_PATCH_SIZE` | 100 (auto) | 25 (auto) |
+| Training length | 56 epochs per class | ~8000 gradient steps per class |
+| Output shape | `(N, 12, 1, 1000)` | `(N, 12, 1, 250)` |
+| Use it for | direct comparison against SSSD-ECG, which emits 10 s records | best available TTS-GAN morphology, if the comparison set is cropped to 2.5 s |
+
+`diff/signal` gap against a real-data baseline computed at the same window
+length (a 2.5 s crop of real PTB-XL scores 0.571-0.700, not 0.66):
+
+| Class | Full-length gap | Short-window gap |
+|---|---|---|
+| NORM | +0.276 | **+0.209** |
+| MI | +0.492 | **+0.362** |
+| STTC | +0.466 | **+0.299** |
+| CD | +0.497 | **+0.449** |
+| HYP | +0.427 | **+0.312** |
+
+The short-window configuration closes roughly a quarter of the gap and is the
+first setting whose output shows sharp isolated spikes on a comparatively flat
+baseline. It is still clearly distinguishable from real ECG.
+
+## What the ablation showed about stability
+
+Collapse point by configuration, measured from the loss trace (both LSGAN
+losses frozen at 0.25):
+
+| Configuration | Collapse at |
+|---|---|
+| window 1000, embed 40 | > 30,000 steps (56 epochs) |
+| window 1000, embed 80 | ~14,500 steps (~27 epochs) |
+| window 250, embed 80 | ~8,500 steps (~4 epochs) |
+
+Both shortening the window and widening the generator **shorten** the stability
+window in gradient steps, so each configuration has to be stopped at its own
+point rather than trained to a common budget. Which quantity drives the
+collapse also changes with the window: at 1000 steps per record, equalizing
+epochs across classes fixed it, while at 250 steps HYP ran 13.4 epochs without
+collapsing and matching gradient steps was the right protocol instead.
+
+A training-length sweep at window 250 / embed 80 (4k, 6k, 8k, 12k, 16k steps)
+put the quality peak at 8000, just before the collapse — and `diff/signal`
+ranked 6000 higher, another reason not to trust it for ranking.
+
 ## Recommended next steps
 
-1. **Shorter windows — the highest-value experiment.** Cut each 10 s record into
-   four 2.5 s windows (250 steps). That puts the sequence length near the 150
-   steps the architecture was tuned for, where its output is healthy, and it
-   also multiplies the training set by four, which most helps the smallest class
-   (HYP 2392 -> 9568). The cost is a protocol change: real data and SSSD-ECG
-   output must be cropped to the same window for comparison. This is standard
-   practice in the ECG generation literature and is worth doing before spending
-   more on hyperparameters. Implementation is a windowing option in
-   `ptbxl_dataLoader.py` plus `SEQ_LEN` and `patch_size`.
-2. **Build `evaluation/`.** `diff/signal` was built to detect training failure
-   quickly and should not be the reported quality metric. A benchmark needs
-   several axes: morphology, power spectra, distributional distance, and a
-   train-on-synthetic / test-on-real classifier score.
-3. **Only then consider more capacity** (`embed_dim` 40 -> 80, `depth` 3 -> 5).
-   Expected value is lower than the windowing change, and larger generators may
-   shorten the stability window further.
+1. **Build `evaluation/`.** `diff/signal` was built to detect training failure
+   quickly and repeatedly proved unreliable as a quality score: it ranked a
+   low-pass-filtered collapse above real data, and it ranked a 6000-step run
+   above the 8000-step run that is visibly better. Every quality judgement in
+   this work ended up being made from waveform plots. A benchmark needs
+   morphology, power spectra, distributional distance, and a train-on-synthetic
+   / test-on-real classifier score.
+2. **Extend the stability window before spending capacity on it.** Every failure
+   so far is the discriminator winning outright, and the two cheapest untried
+   remedies target that directly: the discriminator learns 3x faster than the
+   generator by default (`TTS_GAN_D_LR` 3e-4 against `TTS_GAN_G_LR` 1e-4), and
+   `TTS_GAN_LOSS=wgangp` selects an objective that upstream already implements
+   and that is far less prone to this particular vanishing-gradient collapse.
+   Note that `--d_spectral_norm`, the other standard stabiliser, is defined in
+   `cfg.py` but read nowhere in the training code -- using it means writing it.
+3. **Then raise model capacity.** `latent_dim` (100) and the generator's `depth`
+   (3) are both untried, and neither needs a change to the model code -- only
+   the same runtime rebinding `embed_dim` already uses. Do this after step 2,
+   not before: the one capacity change already measured, `embed_dim` 40 -> 80,
+   improved quality slightly but cut the stability window from >30k gradient
+   steps to ~14,500, so extra capacity is currently paid for in training length.
+   `latent_dim` additionally appears hardcoded as 100 in the generation step of
+   `generate_ttsgan.sh` and in upstream's `gen_plot`, so both need updating with
+   it or generation will fail on a shape mismatch.
+4. **Reduce the difficulty of the task itself.** Windows are currently cut at
+   arbitrary offsets, so the generator has to learn where beats fall as well as
+   what they look like; centring each window on a detected beat removes half of
+   that. Generating 8 leads and deriving the other 4 by the standard formula --
+   as SSSD-ECG does -- would also stop the model spending capacity on 4 leads
+   that are not independent, and would make its output physiologically
+   consistent by construction.
