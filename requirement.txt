@@ -3,3 +3,5 @@ tslearn
 numpy
 scipy
 torch
+statsmodels
+pytorch-fid
