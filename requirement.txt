@@ -1,1 +1,5 @@
 pyhealth
+tslearn
+numpy
+scipy
+torch
