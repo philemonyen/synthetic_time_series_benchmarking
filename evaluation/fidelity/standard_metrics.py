@@ -5,11 +5,43 @@ Standard Metrics for Synthetic Time Series Fidelity Evaluation
 import numpy as np
 from scipy.stats import chi2
 from statsmodels.tsa.stattools import acf
-from scipy.stats import wasserstein_distance
 from pytorch_fid.fid_score import calculate_frechet_distance
 from tslearn.metrics import cdist_dtw
+from scipy.linalg import sqrtm
 
 # Normalized Wasserstein Distance 
+def wasserstein(X, Y, eps=1e-6):
+    """
+    Computes the Multidimensional Fréchet Distance (2-Wasserstein distance
+    assuming Gaussian distributions) between two matrices.
+    """
+    X = np.asarray(X, dtype=float)
+    Y = np.asarray(Y, dtype=float)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+
+    mu_X, mu_Y = np.mean(X, axis=0), np.mean(Y, axis=0)
+    # np.cov returns a scalar when there is a single feature; keep a 2D matrix.
+    sigma_X = np.atleast_2d(np.cov(X, rowvar=False))
+    sigma_Y = np.atleast_2d(np.cov(Y, rowvar=False))
+
+    diff = mu_X - mu_Y
+    mean_term = diff.dot(diff)
+
+    # SciPy >= 1.16: sqrtm(..., disp=False) is deprecated, and 1x1 inputs skip
+    # the (sqrt, errest) tuple and return only the matrix.
+    offset = np.eye(sigma_X.shape[0]) * eps
+    covmean = sqrtm((sigma_X + offset) @ (sigma_Y + offset))
+    if isinstance(covmean, tuple):
+        covmean = covmean[0]
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+
+    covariance_term = np.trace(sigma_X + sigma_Y - 2 * covmean)
+    return float(np.sqrt(max(mean_term + covariance_term, 0.0)))
+
 def normalized_wasserstein_distance(real, holdout, synthetic):
     """
     Computes the Normalized Wasserstein Distance with respect to the holdout dataset.
@@ -19,7 +51,7 @@ def normalized_wasserstein_distance(real, holdout, synthetic):
     - >1: The synthetic data has poor fidelity
     - <1: The synthetic data has memorization warning
     """
-    return wasserstein_distance(real, synthetic) / wasserstein_distance(real, holdout)
+    return wasserstein(real, synthetic) / wasserstein(real, holdout)
 
 # MMD
 def rbf_kernel(x, y, bandwidths):
