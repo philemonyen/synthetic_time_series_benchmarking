@@ -12,35 +12,55 @@ from scipy.linalg import sqrtm
 # Normalized Wasserstein Distance 
 def wasserstein(X, Y, eps=1e-6):
     """
-    Computes the Multidimensional Fréchet Distance (2-Wasserstein distance
-    assuming Gaussian distributions) between two matrices.
+    Computes the Multidimensional Fréchet Distance (2-Wasserstein distance)
+    between two matrices.
     """
     X = np.asarray(X, dtype=float)
     Y = np.asarray(Y, dtype=float)
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
-    if Y.ndim == 1:
-        Y = Y.reshape(-1, 1)
+    if X.ndim == 1: X = X.reshape(-1, 1)
+    if Y.ndim == 1: Y = Y.reshape(-1, 1)
 
     mu_X, mu_Y = np.mean(X, axis=0), np.mean(Y, axis=0)
-    # np.cov returns a scalar when there is a single feature; keep a 2D matrix.
     sigma_X = np.atleast_2d(np.cov(X, rowvar=False))
     sigma_Y = np.atleast_2d(np.cov(Y, rowvar=False))
 
     diff = mu_X - mu_Y
     mean_term = diff.dot(diff)
 
-    # SciPy >= 1.16: sqrtm(..., disp=False) is deprecated, and 1x1 inputs skip
-    # the (sqrt, errest) tuple and return only the matrix.
     offset = np.eye(sigma_X.shape[0]) * eps
     covmean = sqrtm((sigma_X + offset) @ (sigma_Y + offset))
-    if isinstance(covmean, tuple):
-        covmean = covmean[0]
-    if np.iscomplexobj(covmean):
-        covmean = covmean.real
+    if isinstance(covmean, tuple): covmean = covmean[0]
+    if np.iscomplexobj(covmean): covmean = covmean.real
 
     covariance_term = np.trace(sigma_X + sigma_Y - 2 * covmean)
     return float(np.sqrt(max(mean_term + covariance_term, 0.0)))
+
+def standardized_wasserstein(real_features, synth_features):
+    """
+    Computes the Wasserstein distance in units of standard deviations.
+    The scaler is explicitly fit only on the real distribution.
+    """
+    real = np.asarray(real_features, dtype=float)
+    synth = np.asarray(synth_features, dtype=float)
+    
+    if real.ndim == 1: real = real.reshape(-1, 1)
+    if synth.ndim == 1: synth = synth.reshape(-1, 1)
+    
+    # 1. Fit scaler on Real data only (column-wise)
+    real_mean = np.mean(real, axis=0)
+    real_std = np.std(real, axis=0, ddof=1)
+    
+    # Prevent division by zero for constant features
+    real_std = np.where(real_std < 1e-8, 1.0, real_std)
+    
+    # 2. Transform Real data
+    real_standardized = (real - real_mean) / real_std
+    
+    # 3. Transform Synthetic data using Real statistics
+    synth_standardized = (synth - real_mean) / real_std
+    
+    # 4. Compute and return the distance
+    return wasserstein(real_standardized, synth_standardized)
 
 def normalized_wasserstein_distance(real, holdout, synthetic):
     """
@@ -51,7 +71,7 @@ def normalized_wasserstein_distance(real, holdout, synthetic):
     - >1: The synthetic data has poor fidelity
     - <1: The synthetic data has memorization warning
     """
-    return wasserstein(real, synthetic) / wasserstein(real, holdout)
+    return wasserstein(real, synthetic) / wasserstein(real, holdout) + 1e-6
 
 # MMD
 def rbf_kernel(x, y, bandwidths):
